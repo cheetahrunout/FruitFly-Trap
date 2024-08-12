@@ -1,0 +1,117 @@
+const int photoresistorPin = A0;  // Pin where the photoresistor is connected
+const int transistorPin = 13;  // Pin where the transistor base is connected
+
+const int numReadings = 30;  // Number of readings for the moving average (2 per second for 15 seconds)
+int readings[numReadings];  // Array to store the readings
+int readIndex = 0;  // Current reading index
+long total = 0;  // Running total of the readings
+int average = 0;  // Average of the readings
+
+int lightLevel = 0;  // Variable to store the current value from the photoresistor
+int diffCount = 0;  // Counter for the number of cycles the actual value differs from the average
+
+unsigned long previousMillis = 0;  // Stores the last time the sensor was read
+unsigned long fanStartMillis = 0;  // Stores the time when the fan was turned on
+unsigned long fanStopMillis = 0;  // Stores the time when the fan was turned off
+const long interval = 500;  // Interval at which to read the sensor (0.5 seconds)
+const long fanDuration = 2000;  // Duration for which the fan should be on (2 seconds)
+const long delayAfterFan = 1000;  // Delay before reinitializing the average (1 second)
+
+bool fanOn = false;  // Keeps track of whether the fan is on or off
+bool reinitializeAverage = false;  // Flag to indicate when to reinitialize the average
+
+void setup() {
+  // Initialize the transistor pin as an output
+  pinMode(transistorPin, OUTPUT);
+  
+  // Ensure the transistor is off initially
+  digitalWrite(transistorPin, LOW);
+  
+  // Initialize serial communication for plotting the photoresistor output
+  Serial.begin(9600);
+  
+  // Read the first value from the photoresistor to initialize the average
+  lightLevel = analogRead(photoresistorPin);
+  for (int i = 0; i < numReadings; i++) {
+    readings[i] = lightLevel;
+    total += readings[i];
+  }
+  average = total / numReadings;
+}
+
+void loop() {
+  unsigned long currentMillis = millis();
+  
+  // Only read the sensor if the fan is off and not in the delay period after the fan
+  if (!fanOn && !reinitializeAverage && currentMillis - previousMillis >= interval) {
+    // Save the last time the sensor was read
+    previousMillis = currentMillis;
+    
+    // Subtract the last reading
+    total = total - readings[readIndex];
+    
+    // Read the current value from the photoresistor
+    lightLevel = analogRead(photoresistorPin);
+    
+    // Add the reading to the array
+    readings[readIndex] = lightLevel;
+    
+    // Add the reading to the total
+    total = total + readings[readIndex];
+    
+    // Advance to the next position in the array
+    readIndex = readIndex + 1;
+    
+    // If we're at the end of the array, wrap around to the beginning
+    if (readIndex >= numReadings) {
+      readIndex = 0;
+    }
+    
+    // Calculate the average
+    average = total / numReadings;
+    
+    // Print the light level and the average to the Serial Monitor
+    Serial.print("Light Level: ");
+    Serial.print(lightLevel);
+    Serial.print(" Average: ");
+    Serial.println(average);
+    
+    // Check if the current value differs from the average
+    if (abs(lightLevel - average) > 3) {  // Threshold set to 3
+      diffCount++;
+    } else {
+      diffCount = 0;
+    }
+  }
+
+  // Check if the difference has persisted for more than 2 cycles
+  if (diffCount > 2 && !fanOn) {
+    // Turn on the fan
+    digitalWrite(transistorPin, HIGH);
+    fanStartMillis = currentMillis;  // Record the time when the fan was turned on
+    fanOn = true;  // Update the fan state
+    diffCount = 0;  // Reset the difference counter
+  }
+
+  // Check if the fan has been on for the specified duration
+  if (fanOn && currentMillis - fanStartMillis >= fanDuration) {
+    // Turn off the fan
+    digitalWrite(transistorPin, LOW);
+    fanOn = false;  // Update the fan state
+    fanStopMillis = currentMillis;  // Record the time when the fan was turned off
+    reinitializeAverage = true;  // Set the flag to reinitialize the average after delay
+  }
+
+  // Check if the delay after the fan cycle has passed
+  if (reinitializeAverage && currentMillis - fanStopMillis >= delayAfterFan) {
+    // Reinitialize the average with the current reading
+    lightLevel = analogRead(photoresistorPin);
+    total = 0;
+    for (int i = 0; i < numReadings; i++) {
+      readings[i] = lightLevel;
+      total += readings[i];
+    }
+    average = total / numReadings;
+    reinitializeAverage = false;  // Reset the flag
+  }
+}
